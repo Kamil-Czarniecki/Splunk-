@@ -1,0 +1,247 @@
+Authentication data model
+
+| from datamodel:"Authentication"."Authentication" | search (src_user="" OR Authentication.src_user="" OR Authentication.user="*" OR user="*")
+| table _time app signature src src_user authentication_method dest
+| eval utc_time=strftime(_time, "%Y-%m-%dT%H:%M:%S.000%z")
+| sort _time
+
+
+
+---
+
+Investigate process creation on a particular host based on process name (e.g. exe name)
+
+
+(index=wineventlog OR index=ad_* OR index=serverwindowsendpoint_* OR index=userwindowsendpoint_* OR index=corpserv_event) EventCode=4688 host= process_name=
+| table _time user user_email parent_process process_name CommandLine
+
+---
+
+
+User Weblogs Search
+
+| tstats `summariesonly` max(_time) as _time,values(Web.http_method) as http_method,values(Web.status) as status,count from datamodel=Web.Web 
+where * Web.user IN (@) 
+by index, sourcetype, Web.user, Web.src,Web.dest,Web.url,Web.action, Web.http_referrer,Web.http_user_agent
+| `drop_dm_object_name("Web")` 
+| eval url = replace(url,"\.", "[.]"), http_referrer = replace(http_referrer,"\.", "[.]")
+| sort - count 
+| fields _time,index, sourcetype, user, http_method, status, action, src, dest, url, http_referrer, http_user_agent, count
+
+
+---
+
+host web logs
+
+index IN ("web*", proxy*) sourcetype=zscalernss-web devicehostname="*" | table _time app action reason category hostname filename filetype http_method refererURL url
+
+
+---
+
+Emails with url
+ 
+| tstats count earliest(_time) as earliest latest(_time) as latest values(All_Email.src) as src values(All_Email.return_addr) as All_Email.return_addr values(All_Email.file_name) as file_name values(All_Email.url) as url FROM datamodel=Email WHERE 
+    ```CONDITIONS HERE```All_Email.url=
+	```Exclusions below```
+    AND NOT All_Email.src_user IN ("phishing@tesco.com" "support@tescosecurityoperations.zendesk.com", "support@tescoofficesupport.zendesk.com", "xmatters@eu1.xmatters.com", "information.security@tesco.com") NOT All_Email.recipient IN ("*@prgx.com", "phishing@tesco.com", "brand@tescobrandprotection.com" "tescostores-abuse@feeds.opsecsecurity.com") NOT All_Email.subject IN ("Automatic reply *") by index All_Email.src_user All_Email.recipient All_Email.subject All_Email.action 
+| rename All_Email.* AS *, src_user AS EnvelopeSender 
+| convert timeformat="%d/%m/%y %H:%M:%S" ctime(earliest) ctime(latest)
+| mvexpand url 
+| eval url = replace(url,"\.", "[.]")
+
+----
+
+Identifying clickers
+ 
+Zscaler
+| tstats `summariesonly` max(_time) as _time,values(Web.http_method) as http_method,values(Web.status) as status,count from datamodel=Web.Web where * Web.url IN (*) by index, sourcetype, Web.user, Web.src,Web.dest,Web.url,Web.action, Web.http_referrer,Web.http_user_agent
+| `drop_dm_object_name("Web")` 
+| eval url = replace(url,"\.", "[.]"), http_referrer = replace(http_referrer,"\.", "[.]")
+| sort - count 
+| fields _time,index, sourcetype, user, http_method, status, action, src, dest, url, http_referrer, http_user_agent, count
+
+Zscaler search 2
+
+index="zscalerlogs_index" url IN ("*")
+| eval Timestamp=strftime(_time,"%Y-%m-%d %H:%M:%S:%Q")
+| stats earliest(Timestamp) as earliest latest(Timestamp) as latest values(url) as url values(hostname) as hostname values(devicehostname) as devicehostname values(category) as category values(reason) as reason by action user
+
+
+TAP
+index=email* sourcetype="*" *
+| rename recipient{} as tmprecip, threatsInfoMap{}.threat as threat
+| stats count values(fromAddress{}) as fromAddress values(headerFrom) as headerfrom values(eval(coalesce(recipient,tmprecip))) as recipient values(eval(coalesce(threat, url))) as Threat values(subject) as Subject values(userAgent) as userAgent by sender eventType
+| fields eventType fromAddress sender headerfrom Subject recipient Threat userAgent count
+
+---
+TAP search 2
+
+index=email_proofpoint sourcetype=proofpoint_tap_siem eventType=clicksPermitted (url="*t") | table _time recipient sender url clickIP userAgent
+---
+
+
+
+
+---
+Running Email data model to confirm this.
+| tstats `summariesonly` max(_time) as _time, values(All_Email.protocol) as protocol, values(All_Email.recipient) as recipient, values(All_Email.subject) as subject count from datamodel=Email.All_Email 
+   where * All_Email.orig_recipient="*" 
+     NOT All_email.src_user IN (support@tescosecurityoperations.zendesk.com)  
+   by All_Email.src,All_Email.src_user,All_Email.dest |  `drop_dm_object_name("All_Email")` 
+| sort - count | eval url = replace(url,"\.", "[.]")
+| fields _time, protocol, src, src_user, dest, recipient, count
+
+---
+
+
+
+
+| stats values(url) as url values(file_name) as file_name count by index, EnvelopeSender, action, recipient, subject, earliest, latest, srconelogin events
+
+index="onelogin_prod" NOT event_type_id IN (248 254) user IN ()
+| eval events=event_type_id." - ".event_name
+| stats count, earliest(_time) as earliestTime, latest(_time) as latestTime, values(events) as events, values(app) as apps by user_name, user, ipaddr
+| `security_content_ctime(earliestTime)` 
+| `security_content_ctime(latestTime)` 
+| table user_name, user, ipaddr, earliestTime, latestTime, events, apps, count
+---
+
+User activity
+
+index="userwindowsendpoint_*" *HOST* user=* 
+| table _time user src_user parent_process_name dest New_Process_Name CommandLine
+| sort +_time
+---
+
+ttas bulk IP
+
+| inputlookup asset_lookup_the_second where calc_ips IN ("IPs") service_zendesk_queue="*" calc_tag="*" lookup_asset_type="*" calc_domain="*" calc_os="*" lookup_region="*" (lookup_asset_type_flag="*") decomm_flag="0"
+| table hostname, calc_ips, lookup_asset_type, calc_last_seen, calc_os, calc_domain, calc_last_patch_date, calc_needs_patching, calc_last_patch_description, calc_ips, calc_country, calc_model, service_server_role, service_system, service_used_by, service_zendesk_queue, service_team_name, service_wl3
+---
+
+user details bulk
+
+| inputlookup identity_lookup_expanded
+| search identity=
+
+| makeresults | eval user="USER" | `get_identity4events(user)`
+---
+
+stats time
+
+| stats earliest(_time) as earliestEvent latest(_time) as latestEvent
+| convert ctime(earliestEvent), ctime(latestEvent)
+---
+
+Web datamodel
+
+	| tstats `summariesonly` max(_time) as _time,values(Web.http_method) as http_method,values(Web.status) as status,count from datamodel=Web.Web where * Web.url IN (*URL*) by index, sourcetype, Web.user, Web.src,Web.dest,Web.url,Web.action, Web.http_referrer,Web.http_user_agent
+	| `drop_dm_object_name("Web")` 
+	| eval url = replace(url,"\.", "[.]"), http_referrer = replace(http_referrer,"\.", "[.]")
+	| sort - count 
+	| fields _time,index, sourcetype, user, http_method, status, action, src, dest, url, http_referrer, http_user_agent, count
+---
+---
+| tstats `summariesonly` max(_time) as _time,values(Web.http_method) as http_method,values(Web.status) as status,count from datamodel=Web.Web where * Web.url IN (*, *) by index, sourcetype, Web.user, Web.src,Web.dest,Web.url,Web.action, Web.http_referrer,Web.http_user_agent
+| `drop_dm_object_name("Web")` 
+| eval url = replace(url,"\.", "[.]"), http_referrer = replace(http_referrer,"\.", "[.]")
+| sort - count 
+| fields _time,index, sourcetype, user, http_method, status, action, src, dest, url, http_referrer, http_user_agent, count
+---
+
+NAC search for rasp & others
+
+index=fsctcenter sourcetype=fsctcenter_json mac IN ("*") 
+OR host_properties.sw_hostname{}.value=*rasp* 
+OR host_properties.dhcp_hostname_v2{}.value=*rasp* OR host_properties.vendor{}.value=*rasp* 
+OR host_properties.dpl_os_classification{}.value=*rasp* OR host_properties.dpl_vendor_classification{}.value=*rasp* 
+OR host_properties.mac_vendor_string{}.value=*rasp* OR host_properties.matched_fingerprints{}.value=*rasp* 
+OR host_properties.os_classification{}.value=*rasp* OR host_properties.vendor_classification{}.value=*rasp*
+OR host_properties.sw_hostname{}.value=*kali* OR host_properties.dhcp_hostname_v2{}.value=*kali*
+OR host_properties.sw_hostname{}.value=*strike* OR host_properties.dhcp_hostname_v2{}.value=*strike*
+OR host_properties.sw_hostname{}.value=*RPERRY* OR host_properties.dhcp_hostname_v2{}.value=*RPERRY*
+OR host_properties.sw_hostname{}.value=*commando* OR host_properties.dhcp_hostname_v2{}.value=*commando*
+OR host_properties.in_group{}.value="Tesco Policy Groups,Dashboard,Non Corporate Hosts,Core Discovery Groups,Linux/Unix,All Non-Corportate Devices (Known Bad)"
+| rename host_properties.adm{}.value as action, host_properties.sw_port_vlan_name{}.value as vlan
+| stats values(host_properties.sw_hostname{}.value) as swHostname values(host_properties.dhcp_hostname_v2{}.value) as dhcpHostname values(host_properties.sw_location{}.value) as swLocation values(host_properties.segment_path{}.value) as segmentPath earliest(_time) as earliestEvent latest(_time) as latestEvent count by mac,vlan,ip,action
+| convert ctime(earliestEvent), ctime(latestEvent)
+---
+
+Authentication datamodel
+
+| tstats earliest(_time) as earliestEvent latest(_time) as latestEvent count from datamodel=Authentication.Authentication where Authentication.user="USER" AND Authentication.dest="DEST" fillnull_value="-"
+| convert ctime(earliestEvent), ctime(latestEvent)
+---
+
+winevent login search
+
+index IN ("*", "*") "user or host" EventCode IN (4776, 4624, 4625, 4672, 4748)
+| fillnull value=NULL *
+| table _time, dvc, EventCode, signature, AuthenticationPackageName, src_nt_domain, src_nt_host, src_asset, src_dns, src_user, dest_nt_domain, source_workstation, src_ip, Error_Code, PackageName, TargetUserName, TargetDomain, TargetUserSid
+| sort _time
+
+---
+
+find indexes for a string
+
+index=* index!=core_splunk_internal TERM("STRING")
+| eval Timestamp=strftime(_time,"%Y-%m-%d %H:%M:%S")   | stats  count by index, sourcetype    | sort  -count
+---
+
+
+
+deFang urls
+
+| eval url = replace(url,"\.", "[.]")
+
+---
+
+Traffic Datamodel
+
+| tstats summariesonly=t count from datamodel=Network_Traffic where All_Traffic.src="" by _time, All_Traffic.user, All_Traffic.src, All_Traffic.dest, All_Traffic.transport, All_Traffic.action, All_Traffic.src_port, All_Traffic.dest_port, host, index, sourcetype
+| rename All_Traffic.* as *
+
+---
+
+
+---
+Service acc activity
+
+index IN (serverwindowsendpoint_*) acc host
+| table _time EventCode name ParentProcessName NewProcessName CommandLine
+---
+
+Stats for aws network traffic
+
+| stats values(detail.service.eventFirstSeen) as FirstSeen values(detail.service.eventLastSeen) as LastSeen values(instanceType) as instanceType count values(threat_type) as threat_type values(description) as description values(ResourceTypeAffected) as ResourceTypeAffected values(connectionDirection) as connectionDirection values(src_ip) as src_ip values(detail.service.action.networkConnectionAction.localPortDetails.port) as src_port values(dest) as dest values(detail.service.action.networkConnectionAction.remotePortDetails.port) as dest_port values(action) as action by accountId, index, sourcetype
+
+---
+
+Phishing dashboard last search workaround for defanging urls
+
+| fillnull value="-" return_addr, url, file_name
+| mvexpand url 
+| eval url = replace(url,"\.", "[.]")
+| stats values(url) as url values(file_name) as file_name count by index, EnvelopeSender, action, recipient, subject, earliest, latest, src, return_addr
+---
+
+
+---
+
+Azure resource
+
+index="azure_resource" object="*" | table _time Subscription category user callerIpAddress user_type  command dest level properties.message object resultType
+|  sort -_time
+
+
+
+---
+
+looking for filename patterns in email indexes and extracting their hash pair
+
+index=email* TERM("invoice") ```subset of only events that contains keyword for speed/performance purposes```
+| search file_name="*invoice*acc*html" ```returns only evebts with the pattern```
+| eval pos=mvfind(file_name,".*invoice.*acc.*html") ```extracts the position within the filename multivalue field which should match with the position of the hash multivalue field also (based on my testing and manual data validation)``` 
+| eval file=mvindex(file_name,pos), hash=mvindex(file_hash,pos) ```extracts the file name and hash based on the position above```
+| dedup hash ```gets rid of duplicates```
+| table file hash
