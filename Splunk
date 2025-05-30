@@ -12,7 +12,7 @@ Authentication data model
 Investigate process creation on a particular host based on process name (e.g. exe name)
 
 
-(index=wineventlog OR index=ad_* OR index=serverwindowsendpoint_* OR index=userwindowsendpoint_* OR index=corpserv_event) EventCode=4688 host= process_name=
+index=wineventlog EventCode=4688 host= process_name=
 | table _time user user_email parent_process process_name CommandLine
 
 ---
@@ -53,16 +53,16 @@ Emails with url
 
 Identifying clickers
  
-Zscaler
+proxy
 | tstats `summariesonly` max(_time) as _time,values(Web.http_method) as http_method,values(Web.status) as status,count from datamodel=Web.Web where * Web.url IN (*) by index, sourcetype, Web.user, Web.src,Web.dest,Web.url,Web.action, Web.http_referrer,Web.http_user_agent
 | `drop_dm_object_name("Web")` 
 | eval url = replace(url,"\.", "[.]"), http_referrer = replace(http_referrer,"\.", "[.]")
 | sort - count 
 | fields _time,index, sourcetype, user, http_method, status, action, src, dest, url, http_referrer, http_user_agent, count
 
-Zscaler search 2
+proxy search 2
 
-index="zscalerlogs_index" url IN ("*")
+index="*" url IN ("*")
 | eval Timestamp=strftime(_time,"%Y-%m-%d %H:%M:%S:%Q")
 | stats earliest(Timestamp) as earliest latest(Timestamp) as latest values(url) as url values(hostname) as hostname values(devicehostname) as devicehostname values(category) as category values(reason) as reason by action user
 
@@ -76,20 +76,13 @@ index=email* sourcetype="*" *
 ---
 TAP search 2
 
-index=email_proofpoint sourcetype=proofpoint_tap_siem eventType=clicksPermitted (url="*t") | table _time recipient sender url clickIP userAgent
+index=email eventType=clicksPermitted (url="*t") | table _time recipient sender url clickIP userAgent
 ---
 
 
 
 
----
-Running Email data model to confirm this.
-| tstats `summariesonly` max(_time) as _time, values(All_Email.protocol) as protocol, values(All_Email.recipient) as recipient, values(All_Email.subject) as subject count from datamodel=Email.All_Email 
-   where * All_Email.orig_recipient="*" 
-     NOT All_email.src_user IN (support@tescosecurityoperations.zendesk.com)  
-   by All_Email.src,All_Email.src_user,All_Email.dest |  `drop_dm_object_name("All_Email")` 
-| sort - count | eval url = replace(url,"\.", "[.]")
-| fields _time, protocol, src, src_user, dest, recipient, count
+
 
 ---
 
@@ -98,7 +91,7 @@ Running Email data model to confirm this.
 
 | stats values(url) as url values(file_name) as file_name count by index, EnvelopeSender, action, recipient, subject, earliest, latest, srconelogin events
 
-index="onelogin_prod" NOT event_type_id IN (248 254) user IN ()
+index="*" NOT event_type_id IN (248 254) user IN ()
 | eval events=event_type_id." - ".event_name
 | stats count, earliest(_time) as earliestTime, latest(_time) as latestTime, values(events) as events, values(app) as apps by user_name, user, ipaddr
 | `security_content_ctime(earliestTime)` 
